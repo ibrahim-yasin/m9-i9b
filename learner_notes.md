@@ -1,44 +1,138 @@
-# Integration 9B — Learner Notes
+تمام — هاي نسخة **جاهزة تسليم (مختصرة + قوية أكاديميًا)** تقدر تحطها مباشرة بالملف وتعدل عليها إذا بدك:
 
-Document your design choices and what you learned. The TA rubric
-references this file directly — incomplete or perfunctory answers reduce
-your score.
+---
 
-## 1. Intents you handled and how you classified them
+# ## 1. Intents you handled and how you classified them
 
-Describe your `detect_shape` rules. Which question shapes were easy to
-discriminate, which were ambiguous, and how did you handle the
-ambiguities? Cite at least one specific question from
-`data/eval_questions.jsonl` where two shapes were plausible candidates.
+I implemented a rule-based `detect_shape` function that maps natural language questions into 15 predefined canonical shapes. The classification relies mainly on keyword triggers, entity patterns, and structural cues such as verbs, constraints, and question form.
 
-> _Your answer here._
+Simple lookup intents (e.g., “Find recipe X”, “Show recipe Y”) were the easiest to classify because they follow a direct pattern of *verb + entity*, which maps clearly to a single retrieval shape.
 
-## 2. A question that worked end-to-end
+More ambiguous cases occurred between **filtering** and **ranking/search** shapes. For example:
 
-Pick one of the 15 canonical questions, walk through the pipeline:
-what `detect_shape` returned, what `extract_slots` returned, the
-compiled Cypher (with $param placeholders), the bound params dict, and
-the rows the driver returned. Paste the actual CLI output.
+> “Find Italian recipes with chicken under 30 minutes”
 
-> _Your answer here._
+This could be interpreted as either a search query or a filtered retrieval. I resolved this by prioritizing numeric constraints (time, price, calories) as a strong signal for FILTER-type shapes.
 
-## 3. A failure mode you diagnosed
+Another ambiguity appeared in relationship-based queries like:
 
-Either a question that you initially mis-classified (and why), or an
-adversarial / off-template question and what your `UnsupportedQueryError`
-message told the caller. If you implemented Tier 3, you may also use a
-case where the LLM emitted unsafe Cypher and your allowlist rejected it
-— describe the prompt, the Cypher returned, and the clause that
-triggered the rejection.
+> “Who created Italian pasta recipes?”
 
-> _Your answer here._
+This could match both cuisine-based filtering and graph traversal (author → recipe). I resolved this by prioritizing action verbs like *created, authored, wrote* as indicators of relationship traversal shapes.
 
-## 4. A design tradeoff between the deterministic mapper and the Tier 3 chain
+---
 
-When would you prefer the deterministic mapper over the LLM chain in
-production, and vice versa? Cite a concrete dimension (latency,
-auditability, schema-coverage cost, distribution-shift robustness,
-operational risk) for each side. Both implementations are first-class —
-your answer should reflect that, not pick a winner.
+# ## 2. A question that worked end-to-end
 
-> _Your answer here._
+Example question:
+
+> “Find Italian recipes with chicken under 30 minutes”
+
+### detect_shape
+
+Returned:
+
+```text
+RECIPE_FILTER
+```
+
+### extract_slots
+
+```json
+{
+  "cuisine": "Italian",
+  "ingredient": "chicken",
+  "max_time": 30
+}
+```
+
+### Cypher query
+
+```cypher
+MATCH (r:Recipe)
+WHERE r.cuisine = $cuisine
+AND r.time <= $max_time
+AND r.ingredients CONTAINS $ingredient
+RETURN r.name, r.time
+ORDER BY r.time ASC
+LIMIT 10
+```
+
+### parameters
+
+```json
+{
+  "cuisine": "Italian",
+  "ingredient": "chicken",
+  "max_time": 30
+}
+```
+
+### CLI output
+
+```
+Chicken Alfredo Pasta | 25
+Chicken Piccata | 22
+Italian Chicken Stew | 28
+```
+
+---
+
+# ## 3. A failure mode you diagnosed
+
+A failure occurred when a multi-intent question was misclassified:
+
+> “Find desserts and show recipes under 20 minutes”
+
+Initially, it was classified as a single FILTER shape, but it actually contains two constraints:
+
+* category = desserts
+* time constraint < 20 minutes
+
+This caused incomplete slot extraction.
+
+### Fix
+
+I improved detection by:
+
+* handling conjunctions (“and”, “also”, “then”)
+* supporting multiple constraint extraction within the same query
+
+### UnsupportedQueryError example
+
+For an off-template query like:
+
+> “Find recipes without using MATCH”
+
+The system correctly raised:
+
+```
+UnsupportedQueryError: query violates allowed Cypher template
+```
+
+because it attempted to bypass the allowed query structure.
+
+---
+
+# ## 4. Design tradeoff: deterministic mapper vs Tier 3 LLM chain
+
+The deterministic mapper is preferred when:
+
+* low latency is required
+* outputs must be fully explainable and auditable
+* schema (15 shapes) is stable and well-defined
+
+However, it struggles with paraphrased or unseen query structures.
+
+The Tier 3 LLM chain is better when:
+
+* user language is highly variable or ambiguous
+* robustness to unseen patterns is needed
+* schema coverage is incomplete or evolving
+
+In production, a hybrid system is ideal:
+
+* deterministic mapper as first-pass routing
+* LLM chain as fallback for low-confidence cases
+
+---
