@@ -39,3 +39,4 @@ class UnsupportedQueryError(Exception):
         super().__init__(msg)
         self.question_text = question_text
         self.shape_names = names
+"""Custom errors for the deterministic recipe KG mapper."""
