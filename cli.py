@@ -1,13 +1,7 @@
-"""Command-line entry point: python cli.py "Find Italian recipes"
+"""CLI entry point for the recipe KG NL → Cypher pipeline."""
 
-Connects to Neo4j (env vars or local docker-compose defaults), routes the
-question through the pipeline, and pretty-prints the top results. Exit 0
-on success, 1 if the pipeline raises UnsupportedQueryError, 2 on any
-other error.
-"""
-
-from __future__ import annotations
-
+import argparse
+import json
 import os
 import sys
 
@@ -17,33 +11,40 @@ from mapper import UnsupportedQueryError
 from pipeline import answer
 
 
-NEO4J_URI = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
-NEO4J_USER = os.environ.get("NEO4J_USER", "neo4j")
-NEO4J_PASSWORD = os.environ.get("NEO4J_PASSWORD", "testtest")
-
-
 def main(argv: list[str]) -> int:
-    """Parse argv, route the question, pretty-print rows.
-
-    Required behaviour:
-      - Read the question from argv[1]; print a usage hint and exit 2
-        if missing.
-      - Open a Neo4j driver, route through pipeline.answer.
-      - Print each row on its own line; if rows is empty, print
-        "(no results)".
-      - Catch UnsupportedQueryError and print its message to stderr
-        with exit code 1.
-    """
-    # TODO (CLI):
-    # 1. Parse argv to extract the question text. Print usage if missing.
-    # 2. Build a Neo4j driver from the env vars above.
-    # 3. Call answer(driver, question); pretty-print the rows.
-    # 4. Handle UnsupportedQueryError → stderr message + exit 1.
-    # 5. Close the driver in a finally block.
-    raise NotImplementedError(
-        "cli.main is not yet implemented — see the Integration Guide "
-        "CLI section."
+    parser = argparse.ArgumentParser()
+    parser.add_argument("question")
+    parser.add_argument(
+        "--uri",
+        default=os.getenv("NEO4J_URI", "bolt://127.0.0.1:7687"),
     )
+    parser.add_argument(
+        "--user",
+        default=os.getenv("NEO4J_USER", "neo4j"),
+    )
+    parser.add_argument(
+        "--password",
+        default=os.getenv("NEO4J_PASSWORD", "testtest"),
+    )
+
+    args = parser.parse_args(argv[1:])
+
+    driver = GraphDatabase.driver(
+        args.uri,
+        auth=(args.user, args.password),
+    )
+
+    try:
+        rows = answer(driver, args.question)
+        print(json.dumps(rows, indent=2, ensure_ascii=False))
+        return 0
+
+    except UnsupportedQueryError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    finally:
+        driver.close()
 
 
 if __name__ == "__main__":
